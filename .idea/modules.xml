@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$PROJECT_DIR$/../Blocknotif/.idea/Blocknotif.iml" filepath="$PROJECT_DIR$/../Blocknotif/.idea/Blocknotif.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/EthMon.iml" filepath="$PROJECT_DIR$/.idea/EthMon.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../MeasureMiner/.idea/MeasureMiner.iml" filepath="$PROJECT_DIR$/../MeasureMiner/.idea/MeasureMiner.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../Stream/.idea/Stream.iml" filepath="$PROJECT_DIR$/../Stream/.idea/Stream.iml" />
+    </modules>
+  </component>
+</project>
