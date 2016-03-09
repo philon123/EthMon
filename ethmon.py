@@ -105,13 +105,15 @@ class Ethmon(object):
 			if fanTimer >= 30:
 				fanTimer = 0
 				avgTemp = 0
+				maxTemp = 0
 				numCards = 0
 				for card in rig_object['miners']:
 					if card['temperature'] == -1.0: continue
 					avgTemp += card['temperature']
+					maxTemp = maxTemp if maxTemp >= card['temperature'] else card['temperature']
 					numCards += 1
 				avgTemp /= numCards if numCards>0 else 1
-				newSpeed = calcFanSpeedFromTemp(avgTemp)
+				newSpeed = calcFanSpeedFromTemp(maxTemp)#(avgTemp) #TODO set fan speeds for individual cards
 				self.gpuApi.setFanSpeeds(newSpeed)
 				print "Avg Temp is ", avgTemp, ", setting fans to ", newSpeed, "%"
 
