@@ -115,7 +115,7 @@ class Ethmon(object):
 				avgTemp /= numCards if numCards>0 else 1
 				newSpeed = calcFanSpeedFromTemp(maxTemp)#(avgTemp) #TODO set fan speeds for individual cards
 				self.gpuApi.setFanSpeeds(newSpeed)
-				print "Avg Temp is ", avgTemp, ", setting fans to ", newSpeed, "%"
+				print "Max Temp is ", maxTemp, ", setting fans to ", newSpeed, "%"
 
 			#check for requested restart
 			global should_do_restart
