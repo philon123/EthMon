@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 #author Philon
-ETHMON_VERSION=0.52
+ETHMON_VERSION=0.55
 
 import sys
 import os

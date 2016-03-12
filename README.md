@@ -1,12 +1,17 @@
-Ethmon is a monitoring tool for Ethminer. It reads Ethminers output and provides useful data over a web api.
-Note that newer version of Ethminer don't give any commandline output. This tool relies on this output though, so you need the older version. 
+#What is this?
 
-- Provides overall status data and for each card separately. Json format. Call http://IP_OF_MINER:8042?cmd=getdata
-- Remote restarting of miner with http://IP_OF_MINER:8042?cmd=restart
-- Automatically restarts Ethminer if it crashes.
-- Automatic fanspeed tuning to protect your cards.
+Ethmon is a monitoring tool for Ethminer. Unfortunately, Ethminer does not offer any kind of api. Also, current AMD drivers do not automatically set fanspeeds! This project aims to fill these gaps and to allow you to lean back and watch the ether roll in :)
 
-Only ATI cards are supported at the moment.
+*Automatic and configurable fanspeed adjustment for each card to protect your cards
+*Automatically restarts Ethminer if it crashes.
+*JSON api for remote monitoring
+*Provides data for the rig and each card separately. Json format. Call http://IP_OF_MINER:8042?cmd=getdata
+*Remote restarting of miner with http://IP_OF_MINER:8042?cmd=restart
 
-Requires adl3 in /opt/scripts/adl3. No need to install it, just download from github and unpack.
-https://github.com/mjmvisser/adl3/
+Only AMD cards are supported at the moment.
+
+#Installation
+
+* Requires adl3 in /opt/scripts/adl3. No need to install it, just download from github and unpack: https://github.com/mjmvisser/adl3/
+* Clone this repo into /opt/ethmon
+* Run with python /opt/ethmon/ethmon.py /opt/ethmon/ethmon.conf
