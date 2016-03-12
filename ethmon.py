@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 #author Philon
-ETHMON_VERSION=0.51
+ETHMON_VERSION=0.52
 
 import sys
 import os
@@ -17,6 +17,11 @@ import re
 
 rig_object = dict()
 should_do_restart = False
+
+MIN_FAN_PERCENT = 0.0
+MAX_FAN_PERCENT = 0.0
+MIN_FAN_AT_TEMP = 0.0
+MAX_FAN_AT_TEMP = 0.0
 
 def getConfig():
 	if len(sys.argv) == 1:
@@ -48,7 +53,11 @@ def isProgramRunning(name):
 
 def calcFanSpeedFromTemp(temp):
 	#min 50% @ 50°, max 100% @ 100°
-	return min(100, max(50, temp))
+	#return min(100, max(50, temp))
+	if temp <= MIN_FAN_AT_TEMP: return MIN_FAN_PERCENT
+	if temp >= MAX_FAN_AT_TEMP: return MAX_FAN_PERCENT
+	tempFractionOfMax = (temp - MIN_FAN_AT_TEMP) / (MAX_FAN_AT_TEMP - MIN_FAN_AT_TEMP)
+	return int(tempFractionOfMax * (MAX_FAN_PERCENT - MIN_FAN_PERCENT) + MIN_FAN_PERCENT)
 
 ''' Starts/Stops the mining process and other services '''
 class Ethmon(object):
@@ -64,8 +73,18 @@ class Ethmon(object):
 
 	def start(self):
 		config = getConfig()
+		print json.dumps(config)
 		self.poolUrl = config['poolUrl']
-		os.system('killall ethminer')
+		global MIN_FAN_PERCENT
+		global MAX_FAN_PERCENT
+		global MIN_FAN_AT_TEMP
+		global MAX_FAN_AT_TEMP
+		MIN_FAN_PERCENT = float(config['minFanPercent'] if 'minFanPercent' in config else 50)
+		MAX_FAN_PERCENT = float(config['maxFanPercent'] if 'maxFanPercent' in config else 85)
+		MIN_FAN_AT_TEMP = float(config['minFanAtTemp'] if 'minFanAtTemp' in config else 50)
+		MAX_FAN_AT_TEMP = float(config['maxFanAtTemp'] if 'maxFanAtTemp' in config else 85)
+		
+		os.system('killall ethminer >/dev/null')
 		self.minerProcess = subprocess.Popen(
 			'ethminer -G -F ' + self.poolUrl,
 			stderr=subprocess.PIPE,
@@ -104,18 +123,23 @@ class Ethmon(object):
 			fanTimer += 1
 			if fanTimer >= 30:
 				fanTimer = 0
-				avgTemp = 0
-				maxTemp = 0
-				numCards = 0
+				#avgTemp = 0
+				#maxTemp = 0
+				#numCards = 0
+				i = -1
 				for card in rig_object['miners']:
+					i += 1
 					if card['temperature'] == -1.0: continue
-					avgTemp += card['temperature']
-					maxTemp = maxTemp if maxTemp >= card['temperature'] else card['temperature']
-					numCards += 1
-				avgTemp /= numCards if numCards>0 else 1
-				newSpeed = calcFanSpeedFromTemp(maxTemp)#(avgTemp) #TODO set fan speeds for individual cards
-				self.gpuApi.setFanSpeeds(newSpeed)
-				print "Max Temp is ", maxTemp, ", setting fans to ", newSpeed, "%"
+					newFanSpeed = calcFanSpeedFromTemp(card['temperature'])
+					print "Adapter " + str(i) + " temp: " + str(card['temperature']) + ", setting fan speed to " + str(newFanSpeed)
+					self.gpuApi.setFanSpeed(i, newFanSpeed)
+					#avgTemp += card['temperature']
+					#maxTemp = maxTemp if maxTemp >= card['temperature'] else card['temperature']
+					#numCards += 1
+				#avgTemp /= numCards if numCards>0 else 1
+				#newFanSpeed = calcFanSpeedFromTemp(maxTemp)#(avgTemp) #TODO set fan speeds for individual cards
+				#self.gpuApi.setFanSpeeds(newFanSpeed)
+				#print "Max Temp is ", maxTemp, ", setting fans to ", newFanSpeed, "%"
 
 			#check for requested restart
 			global should_do_restart
@@ -283,10 +307,21 @@ class AtiApi(GpuApi):
 	def getCardData(self):
 		return self.cardData
 
+	def setFanSpeed(self, adapterIndex, newPercent):
+		workThread = threading.Thread(target=self._setFanSpeedImpl, args=(adapterIndex, newPercent,))
+		workThread.daemon = True
+		workThread.start()
+		
 	def setFanSpeeds(self, newPercent):
 		workThread = threading.Thread(target=self._setFanSpeedsImpl, args=(newPercent,))
 		workThread.daemon = True
 		workThread.start()
+
+	def _setFanSpeedImpl(self, adapterIndex, newPercent):
+		os.system('/opt/scripts/adl3/atitweak -A {adapterIndex} -f {percent}'.format(
+			percent=int(newPercent), 
+			adapterIndex=int(adapterIndex)
+		))
 
 	def _setFanSpeedsImpl(self, newPercent):
 		os.system('/opt/scripts/adl3/atitweak -f {percent}'.format(percent=int(newPercent)))
