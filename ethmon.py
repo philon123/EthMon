@@ -161,7 +161,7 @@ class Ethmon(object):
 
 		totalMhs = self.outputReader.getMhs()
 		cardData = self.gpuApi.getCardData()
-		if len(cardData) == 0:
+		if len(cardData) == 0 and totalMhs > 0:
 			card = dict()
 			card['adapter_nr'] = 0
 			card['name'] = 'DUMMY CARD'
