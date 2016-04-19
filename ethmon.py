@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 #author Philon
-ETHMON_VERSION = "0.6.2" #use semantic versioning :) www.semver.org
 
 import sys
 import os
@@ -15,13 +14,51 @@ import urlparse
 import Queue
 import re
 
-rig_object = dict()
-should_do_restart = False
+ETHMON_VERSION = "0.7.2" #use semantic versioning :) www.semver.org
+FGLRX_VERSION = "UNKNOWN"
+try:
+	FGLRX_VERSION = subprocess.Popen(
+		'dmesg | grep "\[fglrx\] module loaded" | grep -oE "[0-9]+\.[0-9]+\.[0-9]*"', 
+		stdout=subprocess.PIPE, 
+		shell=True
+	).communicate()[0].strip()
+except Exception:
+	print "unable to find fglrx version"
+	
+config = dict()
+card_data = dict()
 
-MIN_FAN_PERCENT = 0.0
-MAX_FAN_PERCENT = 0.0
-MIN_FAN_AT_TEMP = 0.0
-MAX_FAN_AT_TEMP = 0.0
+def loadConfig():
+	if len(sys.argv) == 1:
+		print 'must specify a config as parameter, aborting...'
+		exit()
+
+	configUrl = sys.argv[1]
+	try:
+		with open(configUrl) as confFile:
+			try:
+				newConfig = json.loads(confFile.read())
+			except ValueError:
+				print 'config is invalid json, aborting...'
+				exit()
+	except IOError:
+		print 'ethminer.conf not found, aborting...'
+		exit()
+	
+	if not 'minFanPercent' in newConfig: newConfig['minFanPercent'] = 50
+	if not 'maxFanPercent' in newConfig: newConfig['maxFanPercent'] = 85
+	if not 'minFanAtTemp' in newConfig: newConfig['minFanAtTemp'] = 50
+	if not 'maxFanAtTemp' in newConfig: newConfig['maxFanAtTemp'] = 85
+	if not 'maxTemp' in newConfig: newConfig['maxTemp'] = 90
+	if not 'minCoreClockPercent' in newConfig: newConfig['minCoreClockPercent'] = 30
+	if not 'maxCoreClockPercent' in newConfig: newConfig['maxCoreClockPercent'] = 100
+	if not 'coreClockPercentStep' in newConfig: newConfig['coreClockPercentStep'] = 5
+	if not 'gpuApi' in newConfig: newConfig['gpuApi'] = 'amd'
+	if  newConfig['gpuApi'] != 'amd' and newConfig['gpuApi'] != 'nvidia':
+		print "Error: Invalid gpu api specified: {gpuApi}. Choose either amd or nvidia.".format(gpuApi=gpuApi)
+		exit()
+		
+	return newConfig
 
 def getSystemUptime():
 	with open('/proc/uptime', 'r') as f:
@@ -33,69 +70,45 @@ def isProgramRunning(name):
 		if len(t)>0 and not 'grep' in t:
 			return True
 	return False
-
-def calcFanSpeedFromTemp(temp):
-	if temp <= MIN_FAN_AT_TEMP: return MIN_FAN_PERCENT
-	if temp >= MAX_FAN_AT_TEMP: return MAX_FAN_PERCENT
-	tempFractionOfMax = (temp - MIN_FAN_AT_TEMP) / (MAX_FAN_AT_TEMP - MIN_FAN_AT_TEMP)
-	return int(tempFractionOfMax * (MAX_FAN_PERCENT - MIN_FAN_PERCENT) + MIN_FAN_PERCENT)
 	
 def castFloat(x):
 	try:
 		return float(x)
 	except ValueError as e:
-		return 0.0
+		return -1.0
 
 ''' Starts/Stops the mining process and other services '''
 class Ethmon(object):
 	def __init__(self):
-		self.config = self.getConfig()
 		self.minerProcess = None
 		self.server = EthmonServer()
-		self.outputReader = EthminerOutputReader()
 		self.server.start(8042)
-		if 'gpuApi' in self.config and self.config['gpuApi'] == 'nvidia':
-			self.gpuApi = NvidiaApi()
-			print "using nvidia api"
-		else:
-			self.gpuApi = AmdApi()
+		self.outputReader = EthminerOutputReader()
+		global config
+		if config['gpuApi'] == 'amd':
 			print "using amd api"
-
-		self.poolUrl = ''
+			self.gpuApi = AmdApi()
+		elif config['gpuApi'] == 'nvidia':
+			print "using nvidia api"
+			self.gpuApi = NvidiaApi()
+		
+		config['defaultCoreClocks'] = self.gpuApi.getDefaultClocks()
+		if len(config['defaultCoreClocks']) > 0:
+			self.gpuApi.setCoreClocks(config['defaultCoreClocks'][0])
 		self.startTime = time.time()
-	
-	def getConfig(self):
-		if len(sys.argv) == 1:
-			print 'must specify a config as parameter, aborting...'
-			exit()
-	
-		configUrl = sys.argv[1]
-		try:
-			with open(configUrl) as confFile:
-				try:
-					return json.loads(confFile.read())
-				except ValueError:
-					print 'config is invalid json, aborting...'
-					exit()
-		except IOError:
-			print 'ethminer.conf not found, aborting...'
-			exit()
 		
 	def start(self):
-		print json.dumps(self.config, indent=4)
-		self.poolUrl = self.config['poolUrl']
-		global MIN_FAN_PERCENT
-		global MAX_FAN_PERCENT
-		global MIN_FAN_AT_TEMP
-		global MAX_FAN_AT_TEMP
-		MIN_FAN_PERCENT = float(self.config['minFanPercent'] if 'minFanPercent' in self.config else 50)
-		MAX_FAN_PERCENT = float(self.config['maxFanPercent'] if 'maxFanPercent' in self.config else 85)
-		MIN_FAN_AT_TEMP = float(self.config['minFanAtTemp'] if 'minFanAtTemp' in self.config else 50)
-		MAX_FAN_AT_TEMP = float(self.config['maxFanAtTemp'] if 'maxFanAtTemp' in self.config else 85)
+		print "using this config: \n" + json.dumps(config, indent=4)
 		
 		os.system('killall ethminer 2>/dev/null')
+		time.sleep(1)
+		if isProgramRunning('ethminer'):
+			print "detected running, hanging ethminer. rebooting in 5s..."
+			time.sleep(5)
+			os.system('reboot')
+			
 		self.minerProcess = subprocess.Popen(
-			'ethminer -G -F ' + self.poolUrl,
+			'ethminer -G -F ' + config['poolUrl'],
 			stderr=subprocess.PIPE,
 			shell=True
 		)
@@ -114,13 +127,14 @@ class Ethmon(object):
 		hangTestTimer = 0
 		updateTimer = 3
 		fanTimer = 29
+		autotuneTimer = 25
 		while True:
 			#check for ethminer crash
 			crashTestTimer += 1
 			if crashTestTimer >= 10:
 				crashTestTimer = 0
 				if not isProgramRunning('ethminer'):
-					print "detected ethminer crash. restarting..."
+					print "detected ethminer crash. restarting miner process..."
 					self.restart()
 					
 			#check for ethminer hang
@@ -132,64 +146,85 @@ class Ethmon(object):
 					time.sleep(2)
 					os.system('reboot')
 					
-			#update rig_object
+			#update card_data
 			updateTimer += 1
 			if updateTimer >= 5:
 				self.updateRigObject()
 				updateTimer = 0
 				
-			#adjust fan speeds
-			fanTimer += 1
-			if fanTimer >= 30:
-				fanTimer = 0
-				i = -1
-				if 'miners' in rig_object:
-					for card in rig_object['miners']:
-						i += 1
-						if 'DUMMY CARD' in card['name']:
-							print "No card was found. For safety, setting all fans to " + str(MAX_FAN_PERCENT) + "%"
-							self.gpuApi.setFanSpeeds(MAX_FAN_PERCENT)
-						else:
-							if card['temperature'] == -1.0: continue
-							newFanSpeed = calcFanSpeedFromTemp(card['temperature'])
-							print "Adapter " + str(i) + " temp: " + str(card['temperature']) + ", setting fan speed to " + str(newFanSpeed)
-							self.gpuApi.setFanSpeed(i, newFanSpeed)
-						
-			#check for requested restart
-			global should_do_restart
-			if should_do_restart:
-				should_do_restart = False
-				self.restart()
+			#autotune
+			autotuneTimer += 1
+			if autotuneTimer >= 30:
+				autotuneTimer = 0
+				self.autotune()
 				
 			time.sleep(1)
 			
+	def autotune(self):
+		for i,card in card_data.iteritems():
+			if 'DUMMY CARD' in card['description']:
+				print "No card was found. For safety, setting all fans to " + str(config['maxFanPercent']) + "%"
+				self.gpuApi.setFanSpeeds(config['maxFanPercent'])
+			else:
+				oldFanPercent = card['fan_percent']
+				oldCoreClock = card['curr_core_clock']
+				oldCoreClockPercent = round(100.0 * card['curr_core_clock'] / config['defaultCoreClocks'][i])
+				newFanPercent = config['maxFanPercent']
+				newCoreClockPercent = oldCoreClockPercent
+				if card['temperature'] == -1.0:
+					newFanPercent = config['maxFanPercent']
+					newCoreClockPercent = oldCoreClockPercent
+					print "Temp of adapter {nr} is UNKNOWN, setting fan speed {fan}%, core clock {core}%".format(
+						nr = card['adapter_nr'],
+						fan = config['maxFanPercent'],
+						core = config['minCoreClockPercent']
+					)
+				else:
+					tempFractionOfMax = (card['temperature'] - config['minFanAtTemp']) / (config['maxFanAtTemp'] - config['minFanAtTemp'])
+					tempFractionOfMax = min(max(0, tempFractionOfMax), 1)
+					newFanPercent = int(tempFractionOfMax * (config['maxFanPercent'] - config['minFanPercent']) + config['minFanPercent'])
+					if card['temperature'] > config['maxTemp']:
+						newCoreClockPercent -= config['coreClockPercentStep']
+					elif card['temperature'] < config['maxTemp']:
+						newCoreClockPercent += config['coreClockPercentStep']
+					newCoreClockPercent = min(max(newCoreClockPercent, config['minCoreClockPercent']), config['maxCoreClockPercent'])
+					newCoreClock = round((newCoreClockPercent/100.0) * config['defaultCoreClocks'][i])
+					print "Temp of adapter {nr} is {temp}, setting fan speed {oldFan}% -> {fan}%, core clock {oldCorePercent}% -> {corePercent}% ({oldCore} MHz -> {core}MHz)".format(
+						nr = card['adapter_nr'],
+						temp = card['temperature'],
+						oldFan = oldFanPercent,
+						fan = newFanPercent,
+						oldCorePercent = oldCoreClockPercent,
+						corePercent = newCoreClockPercent,
+						oldCore = oldCoreClock,
+						core = newCoreClock
+					)
+				self.gpuApi.setFanSpeed(card['adapter_nr'], newFanPercent)
+				self.gpuApi.setCoreClock(card['adapter_nr'], newCoreClock)
+				
 	def updateRigObject(self):
-		new_rig_object = dict()
-		new_rig_object['poolUrl'] = self.poolUrl
-		new_rig_object['firmwareVersion'] = ETHMON_VERSION
-		
+		new_card_data = self.gpuApi.getCardData()
 		totalMhs = self.outputReader.getMhs()
-		cardData = self.gpuApi.getCardData()
-		if len(cardData) == 0 and totalMhs > 0:
+		if len(new_card_data) == 0 and totalMhs > 0:
 			card = dict()
 			card['adapter_nr'] = 0
-			card['name'] = 'DUMMY CARD'
+			card['description'] = 'DUMMY CARD'
 			card['temperature'] = 0
 			card['fan_percent'] = 0
-			card['clock'] = 0
+			card['curr_core_clock'] = 0
+			card['peak_core_clock'] = 0
+			card['curr_mem_clock'] = 0
+			card['peak_mem_clock'] = 0
 			card['voltage'] = 0
-			cardData = [card]
-		mhsPerCard = totalMhs / (len(cardData) if len(cardData)>0 else 1)
-		new_rig_object['miners'] = []
-		for card in cardData:
-			miner = card.copy()
-			miner['name'] = str(card['adapter_nr']) + ' - ' + card['name']
-			miner['mhs'] = mhsPerCard
-			miner['elapsedSecs'] = time.time() - self.startTime
-			new_rig_object['miners'].append(miner)
-			
-		global rig_object
-		rig_object = new_rig_object
+			new_card_data = {"0": card}
+		mhsPerCard = round(totalMhs / (len(new_card_data) if len(new_card_data)>0 else 1), 2)
+		for i, card in new_card_data.iteritems():
+			card['name'] = str(card['adapter_nr']) + ' - ' + card['description']
+			card['mhs'] = mhsPerCard
+			card['elapsedSecs'] = round(time.time() - self.startTime) #TODO delete later
+			card['elapsed_secs'] = card['elapsedSecs']
+		global card_data
+		card_data = new_card_data
 		
 '''Starts API in a new thread'''
 class EthmonServer(object):
@@ -206,10 +241,10 @@ class EthmonServer(object):
 	def stop(self):
 		self.server.shutdown()
 		self.serverThread.join()
-		print time.asctime(), 'Stopped server'
+		print 'Stopped EthMon server'
 
 	def server_thread(self):
-		print time.asctime(), 'Started Server'
+		print 'Started EthMon server'
 		self.server.serve_forever()
 
 ''' Handle API requests. '''
@@ -230,13 +265,16 @@ class EthmonRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 			result['error'] = 'You need to specify a command via &cmd=mycommand'
 		cmd = query_components['cmd'][0]
 		if cmd == 'getdata':
-			result = rig_object
-		elif cmd == 'restart':
-			global should_do_restart
-			should_do_restart = True
-			result['result'] = 'Restarting ethminer now.'
+			new_rig_object = dict()
+			new_rig_object['poolUrl'] = config['poolUrl']
+			new_rig_object['firmwareVersion'] = ETHMON_VERSION + ", fglrx: " + FGLRX_VERSION
+			new_rig_object['miners'] = []
+			for i, card in card_data.iteritems():
+				new_rig_object['miners'].append(card.copy())
+			
+			result = new_rig_object
 		else:
-			result['result'] = 'Usage: "getdata" for data, "restart" to restart ethminer. '
+			result['result'] = 'Usage: "getdata" to get data. '
 
 		self.wfile.write(json.dumps(result, indent=2))
 
@@ -320,78 +358,158 @@ class NonBlockingStreamReader:
 		return result
 
 ''' Interface for communication with GPU Api '''
-class GpuApi:
+class GpuApi(object):
 	def __init__(self):
-		self.cardData = []
+		self.cardData = dict()
 		self.cardDataThread = threading.Thread(target=self.updateCardData)
 		self.cardDataThread.daemon = True
 		self.cardDataThread.start()
+	def getDefaultClocks(self):
+		raise Exception("not implemented")
 	def getCardData(self):
 		return self.cardData
 	def setFanSpeed(self, adapterIndex, newPercent):
 		raise Exception("not implemented")
 	def setFanSpeeds(self, newPercent):
 		raise Exception("not implemented")
+	def setCoreClock(self, adapterIndex, newPercent):
+		raise Exception("not implemented")
+	def setCoreClocks(self, newClock):
+		raise Exception("not implemented")
 	def updateCardData(self):
 		raise Exception("not implemented")
 
 ''' Requires adl3 in /opt/scripts/adl3/ '''
 class AmdApi(GpuApi):
+	def __init__(self):
+		super(AmdApi, self).__init__()
+		os.system('amdconfig --od-enable')
+	def getDefaultClocks(self):
+		isSaved = os.path.isfile('/run/ethmon/clocks.json')
+		if not isSaved:
+			cardData = self.getAmdconfigData()
+			newDefaultCoreClocks = {i: card['peak_core_clock'] for i,card in cardData.iteritems()}
+			if not os.path.exists('/run/ethmon'):
+				os.makedirs('/run/ethmon')
+			with open('/run/ethmon/clocks.json', 'wb') as clocksFile:
+				clocksFile.write(json.dumps(newDefaultCoreClocks, indent=4))
+		with open('/run/ethmon/clocks.json', 'rb') as clocksFile:
+			return json.loads(clocksFile.read())
 	def setFanSpeed(self, adapterIndex, newPercent):
-		os.system('/opt/scripts/adl3/atitweak -A {adapterIndex} -f {percent}'.format(
+		os.system('/opt/scripts/adl3/atitweak -A {adapterIndex} -f {percent} >/dev/null'.format(
 			percent=int(newPercent), 
 			adapterIndex=int(adapterIndex)
 		))
 	def setFanSpeeds(self, newPercent):
-		os.system('/opt/scripts/adl3/atitweak -f {percent}'.format(percent=int(newPercent)))
+		os.system('/opt/scripts/adl3/atitweak -f {percent} >/dev/null'.format(percent=int(newPercent)))
+	def setCoreClock(self, adapterIndex, newClock):
+		os.system('amdconfig --adapter={adapterIndex} --od-setclocks={clock},0 >/dev/null'.format(
+			clock=int(newClock), 
+			adapterIndex=int(adapterIndex)
+		))
+	def setCoreClocks(self, newClock):
+		os.system('amdconfig --adapter=all --od-setclocks={clock},0 >/dev/null'.format(clock=int(newClock)))
 	def updateCardData(self):
 		while True:
+			startTime = time.time()
 			try:
-				startTime = time.time()
-				o,e = subprocess.Popen('/opt/scripts/adl3/atitweak -s', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True).communicate()
-				if "Segmentation fault" in e:
-					print "adl crash detected, rebooting..."
-					time.sleep(2)
-					os.system('reboot')
-				adapters = zip(*re.findall(r'(\d)\.(.+)\(.*\)', o))
-				if len(adapters)==0: return []
-				adapterNrs = list(adapters[0])
-				names = map(str.strip, list(adapters[1]))
-				temps = re.findall(r'temperature ([0-9eE\+\-\.]*) C', o)
-				fans = zip(*re.findall(r'(fan speed ([0-9eE\+\-\.]*)%)|(unable to get fan speed)', o))
-				if fans==[]: return []
-				fans = list(fans[1])
-				fans = [-1.0 if fan=='' else float(fan) for fan in fans]
-				clocks = re.findall(r'engine clock ([0-9eE\+\-\.]*)MHz', o)
-				voltages = re.findall(r'core voltage ([0-9eE\+\-\.]*)VDC', o)
-	
-				newCardData = list()
-				for i in range(len(adapterNrs)):
-					card = dict()
-					card['adapter_nr'] = int(castFloat(adapterNrs[i]))
-					card['name'] = names[i]
-					card['temperature'] = castFloat(temps[i])
-					card['fan_percent'] = castFloat(fans[i])
-					card['clock'] = castFloat(clocks[i])
-					card['voltage'] = castFloat(voltages[i])
-					newCardData.append(card)
+				atitweakData = self.getAtitweakData()
+				amdconfigData = self.getAmdconfigData()
+				if len(atitweakData) != len(amdconfigData):
+					raise ValueError("Atitweak found {at} cards, amdconfig found {ac}"
+						.format(
+							at = len(atitweakData),
+							ac = len(amdconfigData)
+						)
+					)
+				
+				newCardData = atitweakData
+				for i, data in amdconfigData.iteritems():
+					newCardData[i].update(data)
+				#print json.dumps(newCardData, indent=4)
 				self.cardData = newCardData
 			except Exception as e:
 				print "Error while updating card data: " + str(e)
 
-			sleepTime = 30 - min(30, time.time()-startTime)
+			sleepTime = 10 - min(10, time.time()-startTime)
 			time.sleep(sleepTime)
+	def getAtitweakData(self):
+		o,e = subprocess.Popen('/opt/scripts/adl3/atitweak -s', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True).communicate()
+		if "Segmentation fault" in e:
+			print "adl crash detected, rebooting..."
+			time.sleep(2)
+			os.system('reboot')
+		adapters = zip(*re.findall(r'(\d)\.(.+)\(.*\)', o))
+		if len(adapters)==0: raise Exception("No adapters found: " + o)
+		adapterNrs = map(castFloat, list(adapters[0]))
+		descriptions = map(str.strip, list(adapters[1]))
+		temps = map(castFloat, re.findall(r'temperature ([0-9eE\+\-\.]*) C', o))
+		fans = zip(*re.findall(r'(fan speed ([0-9eE\+\-\.]*)%)|(fan speed [0-9]* RPM)|(unable to get fan speed)', o))
+		if fans==[]: raise Exception("No fan speeds found: " + o)
+		fans = map(castFloat, list(fans[1]))
+		clocks = map(castFloat, re.findall(r'engine clock ([0-9eE\+\-\.]*)MHz', o))
+		voltages = map(castFloat, re.findall(r'core voltage ([0-9eE\+\-\.]*)VDC', o))
+
+		newCardData = dict()
+		for i in range(len(adapterNrs)):
+			card = dict()
+			card['adapter_nr'] = int(adapterNrs[i])
+			card['description'] = descriptions[i]
+			card['temperature'] = temps[i]
+			card['fan_percent'] = fans[i]
+			#card['clock'] = clocks[i]
+			card['voltage'] = voltages[i]
+			newCardData[str(card['adapter_nr'])] = card
+		return newCardData
+	def getAmdconfigData(self):
+		o,e = subprocess.Popen('amdconfig --adapter=all --od-getclocks', stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True).communicate()
+		adapters = zip(*re.findall(r'Adapter (\d) - (.+)$', o, flags=re.MULTILINE))
+		if len(adapters)==0: raise Exception("No adapters found: " + o)
+		adapterNrs = map(castFloat, list(adapters[0]))
+		descriptions = map(str.strip, list(adapters[1]))
+		
+		current = zip(*re.findall(r'Current Clocks :\W+(\d+)\W+(\d+)', o))
+		currCores = map(castFloat, list(current[0]))
+		currMems = map(castFloat, list(current[1]))
+		
+		peaks =  zip(*re.findall(r'Current Peak :\W+(\d+)\W+(\d+)', o))
+		peakCores = map(castFloat, list(peaks[0]))
+		peakMems = map(castFloat, list(peaks[1]))
+		
+		newCardData = dict()
+		for i in range(len(adapterNrs)):
+			card = dict()
+			card['adapter_nr'] = int(adapterNrs[i])
+			card['description'] = descriptions[i]
+			card['curr_core_clock'] = currCores[i]
+			card['curr_mem_clock'] = currMems[i]
+			card['peak_core_clock'] = peakCores[i]
+			card['peak_mem_clock'] = peakMems[i]
+			newCardData[str(card['adapter_nr'])] = card
+		#print json.dumps(newCardData)
+		return newCardData
 
 #dummy for now. allows to monitor hashrates only
 class NvidiaApi(GpuApi):
+	def getDefaultClocks(self):
+		return {}
 	def setFanSpeed(self, adapterIndex, newPercent):
 		return
 	def setFanSpeeds(self, newPercent):
 		return
+	def setCoreClock(self, adapterIndex, newClock):
+		return
+	def setCoreClocks(self, newClock):
+		return
 	def updateCardData(self):
-		return []
+		return {}
 	
 if __name__ == '__main__':
+	os.environ['DISPLAY'] = ':0'
+	os.environ['GPU_SINGLE_ALLOC_PERCENT'] = '100'
+	os.environ['GPU_MAX_ALLOC_PERCENT'] = '100'
+	
+	config = loadConfig()
 	ethmon = Ethmon()
 	ethmon.start()
 	try:
