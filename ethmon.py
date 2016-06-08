@@ -15,7 +15,7 @@ import urlparse
 import Queue
 import re
 
-ETHMON_VERSION = "0.7.5"
+ETHMON_VERSION = "0.7.6"
 #FGLRX_VERSION = "UNKNOWN"
 #try:
 #	FGLRX_VERSION = subprocess.Popen(
@@ -199,16 +199,17 @@ class Ethmon(object):
 						newCoreClockPercent += config['coreClockPercentStep']
 					newCoreClockPercent = min(max(newCoreClockPercent, config['minCoreClockPercent']), config['maxCoreClockPercent'])
 					newCoreClock = round((newCoreClockPercent/100.0) * config['defaultCoreClock'])
-					sys.stdout.write("Temp of adapter {nr} is {temp}, setting fan speed {oldFan}% -> {fan}%, core clock {oldCorePercent}% -> {corePercent}% ({oldCore} MHz -> {core}MHz)\n".format(
-						nr = card['adapter_nr'],
-						temp = card['temperature'],
-						oldFan = oldFanPercent,
-						fan = newFanPercent,
-						oldCorePercent = oldCoreClockPercent,
-						corePercent = newCoreClockPercent,
-						oldCore = oldCoreClock,
-						core = newCoreClock
-					))
+					if oldFanPercent != newFanPercent or oldCoreClockPercent != newCoreClockPercent:
+						sys.stdout.write("Temp of adapter {nr} is {temp}, setting fan speed {oldFan}% -> {fan}%, core clock {oldCorePercent}% -> {corePercent}% ({oldCore} MHz -> {core}MHz)\n".format(
+							nr = card['adapter_nr'],
+							temp = card['temperature'],
+							oldFan = oldFanPercent,
+							fan = newFanPercent,
+							oldCorePercent = oldCoreClockPercent,
+							corePercent = newCoreClockPercent,
+							oldCore = oldCoreClock,
+							core = newCoreClock
+						))
 				self.gpuApi.setFanSpeed(card['adapter_nr'], newFanPercent)
 				self.gpuApi.setClock(card['adapter_nr'], newCoreClock, config['gpu-memclock'])
 
@@ -288,6 +289,7 @@ class EthmonRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 				del newCard['peak_core_clock']
 				del newCard['peak_mem_clock']
 				new_rig_object['miners'].append(newCard)
+			new_rig_object['miners'].sort(key=lambda card: card['name'])
 
 			result = new_rig_object
 		elif cmd == 'getconfig':
@@ -297,11 +299,12 @@ class EthmonRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 
 		self.wfile.write(json.dumps(result, indent=2))
 
-		sys.stdout.write("{timestamp} EthMon just answered a {cmd} request from {client}\n".format(
-			timestamp = datetime.datetime.now().strftime('%H:%M:%S'),
-			cmd = cmd,
-			client = self.client_address[0]
-		))
+		if not (cmd == 'getdata' and self.client_address[0] == '127.0.0.1'):
+			sys.stdout.write("{timestamp} EthMon just answered a {cmd} request from {client}\n".format(
+				timestamp = datetime.datetime.now().strftime('%H:%M:%S'),
+				cmd = cmd,
+				client = self.client_address[0]
+			))
 
 '''Starts ethminer process and continuously reads data from its stdout'''
 class EthminerOutputReader(object):
@@ -310,6 +313,7 @@ class EthminerOutputReader(object):
 		self.sr = None
 		self.t = None
 
+		self.mhsCache = []
 		self.mhs = 0
 		self.lastMhsTime = 0
 		self.lastOutputTime = 0
@@ -323,7 +327,7 @@ class EthminerOutputReader(object):
 
 	def parseStream(self):
 		while not self.should_stop:
-			time.sleep(0.5)
+			time.sleep(0.1)
 			newOut = self.sr.readlastline()
 			if not newOut == '':
 				self.lastOutputTime = int(time.time())
@@ -333,6 +337,9 @@ class EthminerOutputReader(object):
 			for i, p in enumerate(parts):
 				if p == 'H/s':
 					mhs = float(parts[i-1]) / 1000000
+					self.mhsCache.insert(0, mhs)
+					del self.mhsCache[5:]
+					self.mhs = (sum(self.mhsCache, 0.0) / len(self.mhsCache)) if len(self.mhsCache)>1 else 0
 					self.mhs = mhs
 					self.lastMhsTime = int(time.time())
 			# miner  23:44:28|ethminer  Mining on PoWhash #e957e159?? : 26503849 H/s = 199229440 hashes / 7.517 s
