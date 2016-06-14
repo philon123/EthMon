@@ -15,7 +15,7 @@ import urlparse
 import Queue
 import re
 
-ETHMON_VERSION = "0.7.6"
+ETHMON_VERSION = "0.7.7"
 #FGLRX_VERSION = "UNKNOWN"
 #try:
 #	FGLRX_VERSION = subprocess.Popen(
@@ -62,7 +62,7 @@ def loadConfig():
 		exit()
 	if not 'gpu-memclock' in newConfig: newConfig['gpu-memclock'] = 0
 	if not 'gpu-vddc' in newConfig: newConfig['gpu-vddc'] = 0
-	if not 'farm-recheck' in newConfig: newConfig['farm-recheck'] = 0
+	if not 'ethminer-params' in newConfig: newConfig['ethminer-params'] = {}
 
 	return newConfig
 
@@ -71,11 +71,12 @@ def getSystemUptime():
 		return int(float(f.readline().split()[0]))
 
 def isProgramRunning(name):
-	out = subprocess.Popen('ps aux | grep {name}'.format(name=name), stdout=subprocess.PIPE, shell=True).communicate()[0]
-	for t in out.split('\n'):
-		if len(t)>0 and not 'grep' in t:
-			return True
-	return False
+	out = subprocess.Popen('pidof {name}'.format(name=name), stdout=subprocess.PIPE, shell=True).communicate()[0]
+	return out != ''
+	#for t in out.split('\n'):
+	#	if len(t)>0 and not 'grep' in t:
+	#		return True
+	#return False
 
 def castFloat(x):
 	try:
@@ -113,12 +114,12 @@ class Ethmon(object):
 		if isProgramRunning('ethminer'):
 			sys.stdout.write("detected running, hanging ethminer. rebooting in 5s...\n")
 			time.sleep(5)
-			os.system('reboot')
+			os.system('reboot -f')
 
 		self.minerProcess = subprocess.Popen(
-			'ethminer -G -F {pool} {recheck}'.format(
+			'ethminer -G -F {pool} {ethminerParams}'.format(
 				pool = config['poolUrl'],
-				recheck = '--farm-recheck ' + str(config['farm-recheck']) if config['farm-recheck']!=0 else ''
+				ethminerParams = ' '.join(['--{k} {v}'.format(k=k, v='"' + v + '"' if type(v)==str else v) for k,v in config['ethminer-params'].iteritems()])
 			),
 			stderr=subprocess.PIPE,
 			shell=True
@@ -154,7 +155,7 @@ class Ethmon(object):
 				if self.outputReader.getSecsSinceLastOutput() >= 60*20:
 					sys.stdout.write("detected ethminer hanging. rebooting...\n")
 					time.sleep(2)
-					os.system('reboot')
+					os.system('reboot -f')
 
 			#update card_data
 			updateTimer += 1
@@ -295,7 +296,7 @@ class EthmonRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 		elif cmd == 'getconfig':
 			result = config
 		else:
-			result['result'] = 'Usage: "getdata" to get data. '
+			result['result'] = 'Usage: "getdata" to get data, "getconfig" to get config. '
 
 		self.wfile.write(json.dumps(result, indent=2))
 
@@ -487,7 +488,7 @@ class AmdApi(GpuApi):
 		if "Segmentation fault" in e:
 			sys.stdout.write("adl crash detected, rebooting...\n")
 			time.sleep(2)
-			os.system('reboot')
+			os.system('reboot -f')
 		adapters = zip(*re.findall(r'(\d)\.(.+)\(.*\)', o))
 		if len(adapters)==0: raise Exception("No adapters found: " + o)
 		adapterNrs = map(castFloat, list(adapters[0]))
