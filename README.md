@@ -7,10 +7,19 @@ Ethmon is a monitoring tool for Ethminer. Unfortunately, Ethminer does not offer
 
 * Clone this repo into /opt/ethmon
 * Requires adl3 in /opt/scripts/adl3. No need to install it, just download from github and unpack: https://github.com/mjmvisser/adl3/
-* Run with python /opt/ethmon/ethmon.py /opt/ethmon/ethmon.conf
+* Run with 'python /opt/ethmon/ethmon.py /opt/ethmon/ethmon.conf'
 
 
 #Changelog / feature list
+
+v0.7.7
+* Allow setting of custom ethminer parameters in config
+* Better error recovery
+
+v0.7.6
+* Removed redundant output
+* Fixed order of cards in getdata output
+* Smoother hashrate reporting
 
 v0.7.5
 * Added api command 'getconfig' that returns the currently used config including default values.
@@ -27,7 +36,7 @@ v0.7.1
 * Option to set max/min core clock. Use this to limit power consumption of your cards.
 
 v0.7.0
-* Automatic down clocking of cards that are running too hot. Will up clock if temps allow. 
+* Automatic down clocking of cards that are running too hot. Will up clock if temps allow.
 
 v0.6.2
 * Automatic restart on ethminer hang (no output for 20min)
