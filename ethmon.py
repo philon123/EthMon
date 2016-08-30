@@ -5,6 +5,7 @@
 
 import sys
 import os
+import signal
 import threading
 import subprocess
 import time
@@ -15,16 +16,7 @@ import urlparse
 import Queue
 import re
 
-ETHMON_VERSION = "0.7.7"
-#FGLRX_VERSION = "UNKNOWN"
-#try:
-#	FGLRX_VERSION = subprocess.Popen(
-#		'dmesg | grep "\[fglrx\] module loaded" | grep -oE "[0-9]+\.[0-9]+\.[0-9]*"',
-#		stdout=subprocess.PIPE,
-#		shell=True
-#	).communicate()[0].strip()
-#except Exception:
-#	sys.stdout.write("unable to find fglrx version\n")
+ETHMON_VERSION = "0.7.9"
 
 config = dict()
 card_data = dict()
@@ -87,6 +79,7 @@ def castFloat(x):
 ''' Starts/Stops the mining process and other services '''
 class Ethmon(object):
 	def __init__(self):
+		self.killer = GracefulKiller()
 		self.minerProcess = None
 		self.server = EthmonServer()
 		self.server.start(8042)
@@ -114,7 +107,7 @@ class Ethmon(object):
 		if isProgramRunning('ethminer'):
 			sys.stdout.write("detected running, hanging ethminer. rebooting in 5s...\n")
 			time.sleep(5)
-			os.system('reboot -f')
+			os.system('systemctl reboot -f')
 
 		self.minerProcess = subprocess.Popen(
 			'ethminer -G -F {pool} {ethminerParams}'.format(
@@ -127,26 +120,26 @@ class Ethmon(object):
 		self.outputReader.start(self.minerProcess.stderr)
 
 	def stop(self):
-		self.outputReader.stop()
+		self.gpuApi.resetClocks()
 		self.minerProcess.kill()
-
-	def restart(self):
-		self.stop()
-		self.start()
+		self.server.stop()
+		self.outputReader.stop()
 
 	def mainLoop(self):
 		crashTestTimer = 0
 		hangTestTimer = 0
 		updateTimer = 3
 		autotuneTimer = 0
-		while True:
+
+		while not self.killer.kill_now:
 			#check for ethminer crash
 			crashTestTimer += 1
 			if crashTestTimer >= 10:
 				crashTestTimer = 0
 				if not isProgramRunning('ethminer'):
-					sys.stdout.write("detected ethminer crash. restarting miner process...\n")
-					self.restart()
+					sys.stdout.write("detected ethminer crash. exiting in 5s...\n")
+					time.sleep(5)
+					raise Exception('detected ethminer crash')
 
 			#check for ethminer hang
 			hangTestTimer += 1
@@ -155,7 +148,7 @@ class Ethmon(object):
 				if self.outputReader.getSecsSinceLastOutput() >= 60*20:
 					sys.stdout.write("detected ethminer hanging. rebooting...\n")
 					time.sleep(2)
-					os.system('reboot -f')
+					os.system('systemctl reboot -f')
 
 			#update card_data
 			updateTimer += 1
@@ -339,7 +332,7 @@ class EthminerOutputReader(object):
 				if p == 'H/s':
 					mhs = float(parts[i-1]) / 1000000
 					self.mhsCache.insert(0, mhs)
-					del self.mhsCache[5:]
+					del self.mhsCache[50:]
 					self.mhs = (sum(self.mhsCache, 0.0) / len(self.mhsCache)) if len(self.mhsCache)>1 else 0
 					self.mhs = mhs
 					self.lastMhsTime = int(time.time())
@@ -410,6 +403,8 @@ class GpuApi(object):
 		raise Exception("not implemented")
 	def setClocks(self, newCoreClock, newMemClock):
 		raise Exception("not implemented")
+	def resetClocks(self):
+		raise Exception("not implemented")
 	def updateCardData(self):
 		raise Exception("not implemented")
 
@@ -459,6 +454,9 @@ class AmdApi(GpuApi):
 			coreClock=int(newCoreClock),
 			memClock=int(newMemClock)
 		))
+	def resetClocks(self):
+		sys.stdout.write('Resetting clocks to default...\n')
+		os.system('atitweak -d')
 	def updateCardData(self):
 		while True:
 			startTime = time.time()
@@ -488,7 +486,7 @@ class AmdApi(GpuApi):
 		if "Segmentation fault" in e:
 			sys.stdout.write("adl crash detected, rebooting...\n")
 			time.sleep(2)
-			os.system('reboot -f')
+			os.system('systemctl reboot -f')
 		adapters = zip(*re.findall(r'(\d)\.(.+)\(.*\)', o))
 		if len(adapters)==0: raise Exception("No adapters found: " + o)
 		adapterNrs = map(castFloat, list(adapters[0]))
@@ -555,8 +553,18 @@ class NvidiaApi(GpuApi):
 		return
 	def setClocks(self, newCoreClock, newMemClock):
 		return
+	def resetClocks(self):
+		pass
 	def updateCardData(self):
 		return {}
+
+class GracefulKiller:
+	kill_now = False
+	def __init__(self):
+		signal.signal(signal.SIGINT, self.exit_gracefully)
+		signal.signal(signal.SIGTERM, self.exit_gracefully)
+	def exit_gracefully(self,signum, frame):
+		self.kill_now = True
 
 if __name__ == '__main__':
 	os.environ['DISPLAY'] = ':0'
