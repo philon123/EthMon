@@ -1,12 +1,17 @@
 {
-	"poolUrl": "http://eu1.nanopool.org:8888/0xb00b54f96cfc1b27d91edeb2100bcc9900b2940a",
+	"miner": "optiminer",
+	"pools": [{
+		"url": "eu1-zcash.flypool.org:3333",
+		"user": "t1M2AwjNXmJXFhfvSK7mZtafzgSVktt1PD2.worker",
+		"pass": "x"
+	}],
 	"gpuApi": "amd",
 	"minFanPercent": 50,
 	"maxFanPercent": 85,
 	"minFanAtTemp": 50,
 	"maxFanAtTemp": 85,
 	"maxTemp": 90,
-	"minCoreClockPercent": 30,
+	"minCoreClockPercent": 50,
 	"maxCoreClockPercent": 100,
 	"coreClockPercentStep": 5,
 	"gpu-vddc": 0,

@@ -1,16 +1,19 @@
 #What is this?
 
-Ethmon is a monitoring tool for Ethminer. Unfortunately, Ethminer does not offer any kind of api. Also, some AMD cards will not automatically adjust fanspeeds! This project aims to fill these gaps and to allow you to lean back and watch the ether roll in :)
+MinerMon is a monitoring tool for crypto miners. Unfortunately, many do not offer any kind of api. Also, some AMD cards will not automatically adjust fanspeeds! This project aims to fill these gaps and to allow you to lean back and watch the coins roll in :)
 
 
 #Installation
 
-* Clone this repo into /opt/ethmon
+* Clone this repo into /opt/minermon
 * Requires adl3 in /opt/scripts/adl3. No need to install it, just download from github and unpack: https://github.com/mjmvisser/adl3/
-* Run with 'python /opt/ethmon/ethmon.py /opt/ethmon/ethmon.conf'
+* Run with 'python /opt/minermon/minermon.py /opt/minermon/config.json'
 
 
 #Changelog / feature list
+
+v0.8.0
+* Support for Optiminer for mining zCash
 
 v0.7.7
 * Allow setting of custom ethminer parameters in config
